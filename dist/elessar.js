@@ -235,12 +235,22 @@
                             }
                             if (typeof this.options.label === 'function') {
                                 this.on('changing', function (ev, range) {
-                                    self.writeLabel(self.options.label.call(self, range.map($.proxy(self.perant.normalise, self.perant))));
+                                    var newRange = Object.assign({}, range);
+                                    newRange = Object.assign({
+                                        start: $.proxy(self.perant.normalise, self.perant)(range.start),
+                                        end: $.proxy(self.perant.normalise, self.perant)(range.end),
+                                    }, newRange);
+
+                                    self.writeLabel(self.options.label.call(self, newRange));
                                 });
                             } else {
                                 this.writeLabel(this.options.label);
                             }
-                            this.range = [];
+                            this.range = {
+                                start: 0, end: 0,
+                                max: Infinity,
+                                'css': '', extended: null
+                            };
                             this.hasChanged = false;
                             if (this.options.value)
                                 this.val(this.options.value);
@@ -268,59 +278,63 @@
                                 dontApplyDelta: false,
                                 trigger: true
                             }, valOpts || {});
-                            var next = this.perant.nextRange(this.$el), prev = this.perant.prevRange(this.$el), delta = range[1] - range[0], self = this;
+                            var next = this.perant.nextRange(this.$el);
+                            var prev = this.perant.prevRange(this.$el);
+                            var delta = range.end - range.start;
+                            var self = this;
                             if (this.options.snap) {
-                                range = range.map(snap);
+                                range.start = snap(range.start);
+                                range.end = snap(range.end);
                                 delta = snap(delta);
                             }
-                            if (next && next.val()[0] <= range[1] && prev && prev.val()[1] >= range[0]) {
-                                range[1] = next.val()[0];
-                                range[0] = prev.val()[1];
+                            if (next && next.val().start <= range.end && prev && prev.val().end >= range.start) {
+                                range.end = next.val().start;
+                                range.start = prev.val().end;
                             }
-                            if (next && next.val()[0] < range[1]) {
-                                if (!this.perant.options.allowSwap || next.val()[1] >= range[0]) {
-                                    range[1] = next.val()[0];
+                            if (next && next.val().start < range.end) {
+                                if (!this.perant.options.allowSwap || next.val().end >= range.start) {
+                                    range.end = next.val().start;
                                     if (!valOpts.dontApplyDelta)
-                                        range[0] = range[1] - delta;
+                                        range.start = range.end - delta;
                                 } else {
                                     this.perant.repositionRange(this, range);
                                 }
                             }
-                            if (prev && prev.val()[1] > range[0]) {
-                                if (!this.perant.options.allowSwap || prev.val()[0] <= range[1]) {
-                                    range[0] = prev.val()[1];
+                            if (prev && prev.val().end > range.start) {
+                                if (!this.perant.options.allowSwap || prev.val().start <= range.end) {
+                                    range.start = prev.val().end;
                                     if (!valOpts.dontApplyDelta)
-                                        range[1] = range[0] + delta;
+                                        range.end = range.start + delta;
                                 } else {
                                     this.perant.repositionRange(this, range);
                                 }
                             }
-                            if (range[1] >= 1) {
-                                range[1] = 1;
+                            if (range.end >= 1) {
+                                range.end = 1;
                                 if (!valOpts.dontApplyDelta)
-                                    range[0] = 1 - delta;
+                                    range.start = 1 - delta;
                             }
-                            if (range[0] <= 0) {
-                                range[0] = 0;
+                            if (range.start <= 0) {
+                                range.start = 0;
                                 if (!valOpts.dontApplyDelta)
-                                    range[1] = delta;
+                                    range.end = delta;
                             }
                             if (this.perant.options.bound) {
                                 var bound = this.perant.options.bound(this);
                                 if (bound) {
-                                    if (bound.upper && range[1] > this.perant.abnormalise(bound.upper)) {
-                                        range[1] = this.perant.abnormalise(bound.upper);
+                                    if (bound.upper && range.end > this.perant.abnormalise(bound.upper)) {
+                                        range.end = this.perant.abnormalise(bound.upper);
                                         if (!valOpts.dontApplyDelta)
-                                            range[0] = range[1] - delta;
+                                            range.start = range.end - delta;
                                     }
-                                    if (bound.lower && range[0] < this.perant.abnormalise(bound.lower)) {
-                                        range[0] = this.perant.abnormalise(bound.lower);
+                                    if (bound.lower && range.start < this.perant.abnormalise(bound.lower)) {
+                                        range.start = this.perant.abnormalise(bound.lower);
                                         if (!valOpts.dontApplyDelta)
-                                            range[1] = range[0] + delta;
+                                            range.end = range.start + delta;
                                     }
                                 }
                             }
-                            if (this.range[0] === range[0] && this.range[1] === range[1])
+                            if (this.range.start === range.start && this.range.end === range.end)
                                 return this.$el;
                             this.range = range;
                             if (valOpts.trigger) {
@@ -330,7 +344,7 @@
                                 ]);
                                 this.hasChanged = true;
                             }
-                            var start = 100 * range[0] + '%', size = 100 * (range[1] - range[0]) + '%';
+                            var start = 100 * range.start + '%', size = 100 * (range.end - range.start) + '%';
                             this.draw(this.perant.options.vertical ? {
                                 top: start,
                                 minHeight: size
@@ -404,11 +418,15 @@
                                 if (mousePos) {
                                     var start = mousePos - perantStart - mouseOffset;
                                     if (start >= 0 && start <= perantSize - beginSize) {
-                                        var rangeOffset = start / perantSize - self.range[0];
-                                        self.val([
-                                            start / perantSize,
-                                            self.range[1] + rangeOffset
-                                        ]);
+                                        var rangeOffset = start / perantSize - self.range.start;
+                                        var newRange = Object.assign({}, self.range);
+                                        newRange = Object.assign({
+                                            start: start / perantSize,
+                                            end: self.range.end + rangeOffset
+                                        }, newRange);
+
+
+                                        self.val(newRange);
                                     } else {
                                         mouseOffset = mousePos - self.startProp('offset');
                                     }
@@ -427,10 +445,12 @@
                                     if (size > perantSize - beginPosStart)
                                         size = perantSize - beginPosStart;
                                     if (size >= minSize) {
-                                        self.val([
-                                            self.range[0],
-                                            self.range[0] + size / perantSize
-                                        ], { dontApplyDelta: true });
+                                        var newRange = Object.assign({}, self.range);
+                                        newRange = Object.assign({
+                                            end: self.range.start + size / perantSize
+                                        }, newRange);
+
+                                        self.val(newRange, { dontApplyDelta: true });
                                     } else if (size <= 10) {
                                         self.swapping = true;
                                         $(document).trigger(opposite + '.elessar');
@@ -454,10 +474,12 @@
                                         size = beginPosStart + beginSize;
                                     }
                                     if (size >= minSize) {
-                                        self.val([
-                                            start / perantSize,
-                                            self.range[1]
-                                        ], { dontApplyDelta: true });
+                                        var newRange = Object.assign({}, self.range);
+                                        newRange = Object.assign({
+                                            start: start / perantSize
+                                        }, newRange);
+
+                                        self.val(newRange, { dontApplyDelta: true });
                                     } else if (size <= 10) {
                                         self.swapping = true;
                                         $(document).trigger(opposite + '.elessar');
@@ -551,7 +573,7 @@
                         findGap: function (range) {
                             var newIndex = 0;
                             this.ranges.forEach(function ($r, i) {
-                                if ($r.val()[0] < range[0] && $r.val()[1] < range[1])
+                                if ($r.val().start < range.start && $r.val().end < range.end)
                                     newIndex = i + 1;
                             });
                             return newIndex;
@@ -619,9 +641,13 @@
                             var self = this;
                             ranges.forEach(function (range, i) {
                                 if (self.ranges[i]) {
-                                    self.ranges[i].val(range.map($.proxy(self.abnormalise, self)));
+                                    range.start = $.proxy(self.abnormalise, self)(range.start);
+                                    range.end = $.proxy(self.abnormalise, self)(range.end);
+                                    self.ranges[i].val(range);
                                 } else {
-                                    self.addRange(range.map($.proxy(self.abnormalise, self)));
+                                    range.start = $.proxy(self.abnormalise, self)(range.start);
+                                    range.end = $.proxy(self.abnormalise, self)(range.end);
+                                    self.addRange(range);
                                 }
                             });
                             return this;
@@ -630,7 +656,9 @@
                             var self = this;
                             if (typeof ranges === 'undefined') {
                                 return this.ranges.map(function (range) {
-                                    return range.val().map($.proxy(self.normalise, self));
+                                    range.val().start = $.proxy(self.normalise, self)(range.start);
+                                    range.val().end = $.proxy(self.normalise, self)(range.end);
+                                    return range.val();
                                 });
                             }
                             if (!this.readonly())
@@ -657,8 +685,8 @@
                             this.insertRangeIndex(range, this.findGap(val));
                         },
                         calcGap: function (index) {
-                            var start = this.ranges[index - 1] ? this.ranges[index - 1].val()[1] : 0;
-                            var end = this.ranges[index] ? this.ranges[index].val()[0] : 1;
+                            var start = this.ranges[index - 1] ? this.ranges[index - 1].val().end : 0;
+                            var end = this.ranges[index] ? this.ranges[index].val().start : 1;
                             return this.normaliseRaw(end) - this.normaliseRaw(start);
                         },
                         readonly: function () {
@@ -682,10 +710,11 @@
                                         minSize: this.options.minSize ? this.abnormaliseRaw(this.options.minSize + this.options.min) : null,
                                         rangeClass: this.options.rangeClass
                                     });
-                                var idx = this.findGap([
-                                        val,
-                                        val + w
-                                    ]);
+
+                                var idx = this.findGap({
+                                    start: val,
+                                    end: val + w
+                                });
                                 var self = this;
                                 this.one('addrange', function (ev, val, range) {
                                     range.one('mouseup', function () {
@@ -697,10 +726,10 @@
                                 });
                                 if (!this.options.minSize || this.calcGap(idx) >= this.options.minSize) {
                                     this.insertRangeIndex(this.phantom, idx, true);
-                                    this.phantom.val([
-                                        val,
-                                        val + w
-                                    ], { trigger: false });
+                                    this.phantom.val({
+                                        start: val,
+                                        end: val + w
+                                    }, { trigger: false });
                                 }
                             }
                         }
